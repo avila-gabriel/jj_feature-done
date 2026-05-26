@@ -2,12 +2,12 @@ version: "3"
 
 tasks:
   bootstrap:
-    desc: Verify jj tooling and template configuration
+    desc: Verify jj tooling and alias configuration
     cmds:
       - sh scripts/bootstrap.sh
 
   done:
-    desc: Validate alias config and rendered skill without touching user config
+    desc: Validate alias config without touching user config
     cmds:
       - sh scripts/check.sh
 

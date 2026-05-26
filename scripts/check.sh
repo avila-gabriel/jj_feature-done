@@ -14,16 +14,11 @@ set -a
 . "$env_file"
 set +a
 
-SKILL_NAME="${SKILL_NAME:-${JJ_ALIAS_NAME:-}}"
 JJ_ALIAS_CONFIG_FILE="${JJ_ALIAS_CONFIG_FILE:-jj-alias.toml}"
 
 required_vars="
 JJ_ALIAS_NAME
 JJ_ALIAS_CONFIG_FILE
-SKILL_NAME
-SKILL_DESCRIPTION
-SKILL_PURPOSE
-TOOL_DESCRIPTION
 "
 
 for var_name in $required_vars; do
@@ -38,14 +33,6 @@ case "$JJ_ALIAS_NAME" in
   *[!a-z0-9-]* | "" | -* | *-)
     echo "error: JJ_ALIAS_NAME must be lower-kebab-case" >&2
     echo "received: $JJ_ALIAS_NAME" >&2
-    exit 1
-    ;;
-esac
-
-case "$SKILL_NAME" in
-  *[!a-z0-9-]* | "" | -* | *-)
-    echo "error: SKILL_NAME must be lower-kebab-case" >&2
-    echo "received: $SKILL_NAME" >&2
     exit 1
     ;;
 esac
@@ -110,23 +97,13 @@ install_support_file "$tmp_dir/config"
 alias_value=$(
   XDG_CONFIG_HOME="$tmp_dir/config" jj --config-file "$alias_config_file" config get "aliases.$JJ_ALIAS_NAME"
 )
-JJ_ALIAS_TOML=$(cat "$alias_config_file")
-export JJ_ALIAS_TOML
-
 XDG_CONFIG_HOME="$tmp_dir/config" jj config set --user "aliases.$JJ_ALIAS_NAME" "$alias_value"
 XDG_CONFIG_HOME="$tmp_dir/config" jj config get "aliases.$JJ_ALIAS_NAME" >/dev/null
 
 if [ -n "${JJ_ALIAS_SMOKE_ARGS:-}" ]; then
-  # Intentionally allow word splitting so simple smoke args such as "--help" work.
+  # Intentionally allow word splitting so simple smoke args such as "--smoke" work.
   # shellcheck disable=SC2086
   XDG_CONFIG_HOME="$tmp_dir/config" jj "$JJ_ALIAS_NAME" $JJ_ALIAS_SMOKE_ARGS >/dev/null
 fi
 
-CODEX_SKILLS_DIR="$tmp_dir/skills" sh "$root_dir/scripts/install-codex-skill.sh" "$SKILL_NAME" "$root_dir/codex_skill" >/dev/null
-
-if grep -R '{{' "$tmp_dir/skills/$SKILL_NAME" >/dev/null 2>&1; then
-  echo "error: rendered skill still contains template placeholders" >&2
-  exit 1
-fi
-
-echo "Alias and skill template are valid."
+echo "Alias is valid."

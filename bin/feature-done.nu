@@ -1,125 +1,5 @@
 #!/usr/bin/env nu
 
-def ps-field [pid: int, field: string] {
-  let result = (^ps -p $pid -o $"($field)=" | complete)
-
-  if $result.exit_code == 0 {
-    $result.stdout | str trim
-  } else {
-    ""
-  }
-}
-
-def resolve-external [candidate: string] {
-  let command = ($candidate | str trim)
-
-  if $command == "" {
-    return null
-  }
-
-  if $command =~ "/" {
-    let path = ($command | path expand)
-    let file_result = (^test -f $path | complete)
-    let exec_result = (^test -x $path | complete)
-
-    if $file_result.exit_code == 0 and $exec_result.exit_code == 0 {
-      return $path
-    }
-
-    return null
-  }
-
-  let matches = (which $command | where type == external)
-
-  for match in $matches {
-    let resolved = (resolve-external $match.path)
-
-    if $resolved != null {
-      return $resolved
-    }
-  }
-
-  null
-}
-
-def detect-codex-bin [] {
-  mut pid = $nu.pid
-  mut saw_codex = false
-
-  loop {
-    let ppid_text = (ps-field $pid "ppid")
-
-    if $ppid_text == "" {
-      if $saw_codex {
-        return (resolve-external "codex")
-      }
-
-      return null
-    }
-
-    let ppid = ($ppid_text | into int)
-
-    if $ppid <= 1 {
-      if $saw_codex {
-        return (resolve-external "codex")
-      }
-
-      return null
-    }
-
-    let comm = (ps-field $ppid "comm")
-    let args = (ps-field $ppid "args")
-
-    let explicit_matches = (
-      $args
-      | parse --regex '(?P<bin>(?:[^[:space:]]*/)?codex-[A-Za-z0-9_.-]+)'
-    )
-
-    for candidate in ($explicit_matches | get bin) {
-      $saw_codex = true
-      let resolved = (resolve-external $candidate)
-
-      if $resolved != null {
-        return $resolved
-      }
-    }
-
-    if $comm =~ '^codex-[A-Za-z0-9_.-]+$' {
-      $saw_codex = true
-      let resolved = (resolve-external $comm)
-
-      if $resolved != null {
-        return $resolved
-      }
-    }
-
-    let plain_matches = (
-      $args
-      | parse --regex '(^|[[:space:]])(?P<bin>(?:[^[:space:]]*/)?codex)($|[[:space:]])'
-    )
-
-    for candidate in ($plain_matches | get bin) {
-      $saw_codex = true
-      let resolved = (resolve-external $candidate)
-
-      if $resolved != null {
-        return $resolved
-      }
-    }
-
-    if $comm == "codex" {
-      $saw_codex = true
-      let resolved = (resolve-external $comm)
-
-      if $resolved != null {
-        return $resolved
-      }
-    }
-
-    $pid = $ppid
-  }
-}
-
 def jj-lines [args: list<string>] {
   let result = (run-external jj ...$args | complete)
 
@@ -220,7 +100,39 @@ def resolve-base [] {
   }
 }
 
-def smoke [] {
+def codex-command-name [candidate?: string] {
+  if $candidate == null or ($candidate | str trim) == "" {
+    error make {
+      msg: "Usage: jj feature-done <codex-bin>\nExample: jj feature-done codex-rafa"
+    }
+  }
+
+  let command = ($candidate | str trim)
+
+  if not ($command =~ '^[A-Za-z0-9_./+-]+$') {
+    error make {
+      msg: $"Codex command must be a command name or path without shell syntax: ($command)"
+    }
+  }
+
+  $command
+}
+
+def interactive-shell [] {
+  let shell = ($env.SHELL? | default "/bin/sh" | str trim)
+
+  if $shell == "" {
+    "/bin/sh"
+  } else {
+    $shell
+  }
+}
+
+def codex-shell-command [command: string, args: list<string>] {
+  ([$command] ++ $args) | str join " "
+}
+
+def smoke [codex_bin?: string] {
   let sample = (bookmark-revset "trunk()")
 
   if $sample != "(trunk()) & bookmarks()" {
@@ -281,23 +193,31 @@ def smoke [] {
   if $root_source_count != 0 {
     error make { msg: $"Source smoke revset includes root: ($sources)" }
   }
+
+  if $codex_bin != null {
+    let codex_command = (codex-command-name $codex_bin)
+    let codex_result = (
+      run-external (interactive-shell) "-ic" (codex-shell-command $codex_command ["--version"])
+      | complete
+    )
+
+    if $codex_result.exit_code != 0 {
+      print --stderr $codex_result.stderr
+      error make { msg: $"Codex command smoke failed: ($codex_command)" }
+    }
+  }
 }
 
 def main [
+  codex_bin?: string
   --smoke
 ] {
   if $smoke {
-    smoke
+    smoke $codex_bin
     return
   }
 
-  let codex_bin = (detect-codex-bin)
-
-  if $codex_bin == null {
-    error make {
-      msg: "Could not detect the current Codex binary from the parent process chain"
-    }
-  }
+  let codex_command = (codex-command-name $codex_bin)
 
   let base = (resolve-base)
   let stack = (stack-revset $base)
@@ -416,13 +336,11 @@ def main [
     $net_diff
   ] | str join "\n")
 
-  print $"Using Codex binary from parent chain: ($codex_bin)"
-
-  let codex_args = [exec --ephemeral --sandbox read-only -]
+  print $"Using Codex command: ($codex_command)"
 
   let codex_result = (
     $prompt
-    | run-external $codex_bin ...$codex_args
+    | run-external (interactive-shell) "-ic" (codex-shell-command $codex_command ["exec" "--ephemeral" "--sandbox" "read-only" "-"])
     | complete
   )
 

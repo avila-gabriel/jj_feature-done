@@ -14,7 +14,6 @@ set -a
 . "$env_file"
 set +a
 
-SKILL_NAME="${SKILL_NAME:-${JJ_ALIAS_NAME:-}}"
 JJ_ALIAS_CONFIG_FILE="${JJ_ALIAS_CONFIG_FILE:-jj-alias.toml}"
 
 if [ -z "${JJ_ALIAS_NAME:-}" ] || [ -z "${JJ_ALIAS_CONFIG_FILE:-}" ]; then
@@ -74,12 +73,7 @@ install_support_file() {
 install_support_file "${XDG_CONFIG_HOME:-$HOME/.config}"
 
 alias_value=$(jj --config-file "$alias_config_file" config get "aliases.$JJ_ALIAS_NAME")
-JJ_ALIAS_TOML=$(cat "$alias_config_file")
-export JJ_ALIAS_TOML
-
 jj config set --user "aliases.$JJ_ALIAS_NAME" "$alias_value"
 jj config get "aliases.$JJ_ALIAS_NAME" >/dev/null
 
-sh "$root_dir/scripts/install-codex-skill.sh" "$SKILL_NAME" "$root_dir/codex_skill"
-
-echo "Installed jj alias: jj $JJ_ALIAS_NAME"
+echo "Installed jj alias: jj $JJ_ALIAS_NAME <codex-bin>"
