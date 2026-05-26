@@ -5,54 +5,25 @@ description: {{SKILL_DESCRIPTION}}
 
 # Finalize jj feature stack
 
-Use this skill only when the user explicitly references `@{{SKILL_NAME}}`
-or the canonical skill reference that resolves to it. Do not select it just
-because the user asks to finish, squash, or finalize a feature.
-
-Intent:
-
-When explicitly referenced, this skill uses a jj alias to finalize a feature in
-a solo-dev Jujutsu repo. The current workspace may have several changes stacked
-on top of `trunk()`. Turn that stack into one polished feature-complete commit
-directly on top of trunk, then move the local trunk bookmark to that commit.
+Use this skill when the user explicitly references `@{{SKILL_NAME}}`.
 
 ## Workflow
 
 1. Confirm the alias is installed: `jj config get aliases.{{JJ_ALIAS_NAME}}`.
-2. Inspect `jj status` and the relevant stack before changing history.
-3. Run the repo command:
+2. Inspect `jj status`.
+3. Run:
 
    ```sh
    jj {{JJ_ALIAS_NAME}}
    ```
 
-4. Pass an explicit base only when `trunk()` is not the intended base:
-
-   ```sh
-   jj {{JJ_ALIAS_NAME}} main
-   jj {{JJ_ALIAS_NAME}} trunk
-   jj {{JJ_ALIAS_NAME}} 'main@origin'
-   ```
-
+4. If it fails, return the failed command output and stop.
 5. Review the resulting `jj status` and `jj log`.
-6. If the alias changes history, mention that `jj undo` can restore the previous operation.
 
 Expected result:
 
-- All changes in `trunk()..@` become one commit on top of the old trunk.
-- The final commit message is generated from the stack descriptions, changed files, and human-relevant diff.
-- Generated-file churn is excluded from the AI message context.
-- The local bookmark pointing at the old trunk revision is moved to the final feature commit.
+- The stack above the local trunk bookmark becomes one commit on top of trunk.
+- The local trunk bookmark moves to the final commit.
 - No editor is opened.
 
 {{CRITICAL_CONSTRAINT}}
-
-## Alias
-
-```toml
-{{JJ_ALIAS_TOML}}
-```
-
-```sh
-jj {{JJ_ALIAS_NAME}}
-```
