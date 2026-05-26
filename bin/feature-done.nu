@@ -101,23 +101,33 @@ def bookmark-names-at [target: string] {
 def local-bookmark-target [name: string] {
   let result = (
     run-external jj
-      bookmark
-      list
-      (bookmark-exact-pattern $name)
       "--color" never
-      "-T" 'name ++ " " ++ normal_target.commit_id().short() ++ "\n"'
+      "--no-pager"
+      log
+      "--no-graph"
+      "-r" (bookmark-exact-revset $name)
+      "-T" 'commit_id.short() ++ " " ++ local_bookmarks.map(|b| b.name()).join(",") ++ "\n"'
     | complete
   )
 
   if $result.exit_code != 0 {
     print --stderr $result.stderr
-    error make { msg: $"jj command failed: jj bookmark list (bookmark-exact-pattern $name)" }
+    error make { msg: $"jj command failed: jj log -r (bookmark-exact-revset $name)" }
   }
 
   let lines = (
     $result.stdout
     | lines
     | where {|line| ($line | str trim) != "" }
+    | where {|line|
+      let fields = ($line | split row " ")
+
+      if ($fields | length) < 2 {
+        false
+      } else {
+        (($fields | get 1) | split row "," | any {|bookmark| $bookmark == $name })
+      }
+    }
   )
 
   if ($lines | length) == 0 {
@@ -130,14 +140,14 @@ def local-bookmark-target [name: string] {
 
   let fields = (($lines | first) | split row " ")
 
-  if ($fields | length) != 2 or ($fields | get 0) != $name {
-    error make { msg: $"Unexpected bookmark list output for ($name): ($lines | first)" }
+  if ($fields | length) < 2 {
+    error make { msg: $"Unexpected local bookmark target output for ($name): ($lines | first)" }
   }
 
   {
     name: $name,
     revset: (bookmark-exact-revset $name),
-    commit: ($fields | get 1),
+    commit: ($fields | get 0),
   }
 }
 
@@ -171,6 +181,45 @@ def codex-command-name [candidate?: string] {
   }
 
   $command
+}
+
+def file-executable [path: string] {
+  let file_result = (^test -f $path | complete)
+  let exec_result = (^test -x $path | complete)
+
+  $file_result.exit_code == 0 and $exec_result.exit_code == 0
+}
+
+def default-codex-bin [] {
+  let configured = ($env.FEATURE_DONE_CODEX_BIN? | default "" | str trim)
+
+  if $configured != "" {
+    return $configured
+  }
+
+  let mise_codex = ($env.HOME | path join ".local/share/mise/installs/node/22.21.0/bin/codex")
+
+  if (file-executable $mise_codex) {
+    return $mise_codex
+  }
+
+  "codex"
+}
+
+def codex-command-prefix [command: string] {
+  if $command =~ '^codex-[A-Za-z0-9_.-]+$' {
+    let profile_home = ($env.HOME | path join $".($command)")
+
+    let profile_result = (^test -d $profile_home | complete)
+
+    if $profile_result.exit_code != 0 {
+      error make { msg: $"Codex profile directory not found: ($profile_home)" }
+    }
+
+    [$"CODEX_HOME=($profile_home)" (default-codex-bin)]
+  } else {
+    [$command]
+  }
 }
 
 def simple-shell-token [label: string, value: string] {
@@ -243,7 +292,7 @@ def interactive-shell [] {
 }
 
 def codex-shell-command [command: string, args: list<string>] {
-  ([$command] ++ $args) | str join " "
+  ((codex-command-prefix $command) ++ $args) | str join " "
 }
 
 def smoke [codex_bin?: string] {
@@ -427,18 +476,38 @@ def main [
     "Task:"
     "Write the final jj change description for the single completed feature commit."
     ""
-    "Use the existing change descriptions as the primary source of intent. They may"
-    "contain goal, plan, deliverables, implementation notes, migrations, and WIP"
-    "details. Merge the useful parts into one final description."
+    "Use the existing change descriptions as the primary context. Do not run"
+    "extra repository commands or investigate beyond the context below."
+    ""
+    "Each input change description may look like this:"
+    "<goal>"
+    "## Plan"
+    "- planned work"
+    "## Debrief"
+    "- Blockers / limitations: ..."
+    "- Differences from goal: ..."
+    "- Left for later: ..."
+    "- Risks / surprises: ..."
+    ""
+    "That shape describes the input changes only. Do not preserve that structure"
+    "in the final message."
+    ""
+    "Interpretation:"
+    "- Treat each input goal as local intent."
+    "- Treat Debrief sections as the best evidence of what actually happened."
+    "- Use Plan entries only when they clearly describe implemented work."
+    "- Discard planning notes, WIP process, and per-change scaffolding."
+    "- Use the file and diff context below only as supporting evidence."
     ""
     "Rules:"
     "- Output ONLY the final jj change description."
     "- No markdown fences."
     "- No explanation outside the commit message."
-    "- First line <= 72 characters."
+    "- First line <= 72 characters and names the high-level feature/goal of the whole stack."
     "- Use imperative mood."
-    "- Body may use concise bullets if useful."
-    "- Preserve the feature goal, final behavior, deliverables, migrations, and important risks."
+    "- Body may use concise bullets describing what was actually done."
+    "- Preserve final behavior, deliverables, migrations, and still-relevant risks."
+    "- Include blockers, limitations, differences, or left-for-later items only when still relevant."
     "- Drop WIP wording, temporary planning notes, duplicated bullets, and generated-file churn."
     "- Do not mention jj, squash, branch, stack, or Codex unless relevant to the feature itself."
     ""
