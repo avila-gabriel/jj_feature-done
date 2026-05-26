@@ -1,0 +1,7 @@
+[aliases]
+feature-done = [
+  "util", "exec", "--",
+  "sh", "-c",
+  "exec nu \"${XDG_CONFIG_HOME:-$HOME/.config}/jj/feature-done.nu\" \"$@\"",
+  "feature-done",
+]

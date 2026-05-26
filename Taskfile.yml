@@ -1,0 +1,17 @@
+version: "3"
+
+tasks:
+  bootstrap:
+    desc: Verify jj tooling and template configuration
+    cmds:
+      - sh scripts/bootstrap.sh
+
+  done:
+    desc: Validate alias config and rendered skill without touching user config
+    cmds:
+      - sh scripts/check.sh
+
+  install:
+    desc: Install the jj alias and Codex skill
+    cmds:
+      - sh scripts/install.sh

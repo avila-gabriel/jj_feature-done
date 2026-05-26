@@ -1,0 +1,3 @@
+display_name: "{{SKILL_NAME}}"
+short_description: "{{TOOL_DESCRIPTION}}"
+default_prompt: "Use @{{SKILL_NAME}} to {{SKILL_PURPOSE}}."
