@@ -63,8 +63,16 @@ def bookmark-revset [target: string] {
   $"\(($target)\) & bookmarks\(\)"
 }
 
-def local-trunk-revset [] {
-  'bookmarks(exact:"main") | bookmarks(exact:"master") | bookmarks(exact:"trunk")'
+def trunk-bookmark-names [] {
+  ["main" "master" "trunk"]
+}
+
+def bookmark-exact-pattern [name: string] {
+  ["exact:" $name] | str join ""
+}
+
+def bookmark-exact-revset [name: string] {
+  ['bookmarks(exact:"' $name '")'] | str join ""
 }
 
 def stack-revset [base: string] {
@@ -90,13 +98,60 @@ def bookmark-names-at [target: string] {
   ] | str trim
 }
 
-def resolve-base [] {
-  let configured_base = "trunk()"
+def local-bookmark-target [name: string] {
+  let result = (
+    run-external jj
+      bookmark
+      list
+      (bookmark-exact-pattern $name)
+      "--color" never
+      "-T" 'name ++ " " ++ normal_target.commit_id().short() ++ "\n"'
+    | complete
+  )
 
-  if (bookmark-names-at $configured_base) != "" {
-    $configured_base
-  } else {
-    local-trunk-revset
+  if $result.exit_code != 0 {
+    print --stderr $result.stderr
+    error make { msg: $"jj command failed: jj bookmark list (bookmark-exact-pattern $name)" }
+  }
+
+  let lines = (
+    $result.stdout
+    | lines
+    | where {|line| ($line | str trim) != "" }
+  )
+
+  if ($lines | length) == 0 {
+    return null
+  }
+
+  if ($lines | length) > 1 {
+    error make { msg: $"Local bookmark ($name) matched multiple targets" }
+  }
+
+  let fields = (($lines | first) | split row " ")
+
+  if ($fields | length) != 2 or ($fields | get 0) != $name {
+    error make { msg: $"Unexpected bookmark list output for ($name): ($lines | first)" }
+  }
+
+  {
+    name: $name,
+    revset: (bookmark-exact-revset $name),
+    commit: ($fields | get 1),
+  }
+}
+
+def resolve-base [] {
+  for name in (trunk-bookmark-names) {
+    let target = (local-bookmark-target $name)
+
+    if $target != null {
+      return $target
+    }
+  }
+
+  error make {
+    msg: "No local trunk bookmark found; expected one of: main, master, trunk"
   }
 }
 
@@ -116,6 +171,65 @@ def codex-command-name [candidate?: string] {
   }
 
   $command
+}
+
+def simple-shell-token [label: string, value: string] {
+  let token = ($value | str trim)
+
+  if $token == "" {
+    error make { msg: $"($label) cannot be empty" }
+  }
+
+  if not ($token =~ '^[A-Za-z0-9_./:+-]+$') {
+    error make {
+      msg: $"($label) must be a simple shell token without spaces or shell syntax: ($token)"
+    }
+  }
+
+  $token
+}
+
+def env-or-default [name: string, fallback: string] {
+  let value = ($env | get --optional $name)
+
+  if $value == null or (($value | into string | str trim) == "") {
+    $fallback
+  } else {
+    $value | into string
+  }
+}
+
+def codex-model [] {
+  simple-shell-token "Codex model" (env-or-default "FEATURE_DONE_CODEX_MODEL" "gpt-5.5")
+}
+
+def codex-reasoning-effort [] {
+  simple-shell-token "Codex reasoning effort" (env-or-default "FEATURE_DONE_CODEX_REASONING_EFFORT" "low")
+}
+
+def codex-reasoning-summary [] {
+  simple-shell-token "Codex reasoning summary" (env-or-default "FEATURE_DONE_CODEX_REASONING_SUMMARY" "none")
+}
+
+def codex-exec-args [] {
+  [
+    "exec"
+    "--ephemeral"
+    "--sandbox"
+    "read-only"
+    "--model"
+    (codex-model)
+    "-c"
+    $"model_reasoning_effort=(codex-reasoning-effort)"
+    "-c"
+    $"model_reasoning_summary=(codex-reasoning-summary)"
+    "-"
+  ]
+}
+
+def codex-version-args [] {
+  let args = (codex-exec-args)
+  ($args | first (($args | length) - 1)) ++ ["--version"]
 }
 
 def interactive-shell [] {
@@ -148,7 +262,8 @@ def smoke [codex_bin?: string] {
     -T 'commit_id ++ "\n"'
   ] | ignore
 
-  let base = (resolve-base)
+  let base_info = (resolve-base)
+  let base = $base_info.revset
   let base_count = (
     jj-lines [--color never --no-pager log --no-graph -r $base -T 'commit_id ++ "\n"']
     | length
@@ -197,7 +312,9 @@ def smoke [codex_bin?: string] {
   if $codex_bin != null {
     let codex_command = (codex-command-name $codex_bin)
     let codex_result = (
-      run-external (interactive-shell) "-ic" (codex-shell-command $codex_command ["--version"])
+      run-external (interactive-shell) "-ic" (
+        codex-shell-command $codex_command (codex-version-args)
+      )
       | complete
     )
 
@@ -219,7 +336,9 @@ def main [
 
   let codex_command = (codex-command-name $codex_bin)
 
-  let base = (resolve-base)
+  let base_info = (resolve-base)
+  let base = $base_info.revset
+  let base_bookmark = $base_info.name
   let stack = (stack-revset $base)
   let dest = (dest-revset $stack)
   let sources = (sources-revset $dest)
@@ -337,10 +456,11 @@ def main [
   ] | str join "\n")
 
   print $"Using Codex command: ($codex_command)"
+  print $"Using Codex model: (codex-model), effort: (codex-reasoning-effort)"
 
   let codex_result = (
     $prompt
-    | run-external (interactive-shell) "-ic" (codex-shell-command $codex_command ["exec" "--ephemeral" "--sandbox" "read-only" "-"])
+    | run-external (interactive-shell) "-ic" (codex-shell-command $codex_command (codex-exec-args))
     | complete
   )
 
@@ -377,8 +497,8 @@ def main [
     jj squash --from $sources --into $dest -m $msg
   }
 
-  print $"Moving local bookmarks currently at ($base) to the final feature commit."
-  jj bookmark move --from $base --to $dest
+  print $"Moving local bookmark ($base_bookmark) currently at ($base) to the final feature commit."
+  jj bookmark move (bookmark-exact-pattern $base_bookmark) --from $base --to $dest
 
   print ""
   print "Final stack:"
